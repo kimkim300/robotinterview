@@ -75,16 +75,14 @@
         setLogLevel('Debug');
 
         // =========================================================================
-        // ⭐ 중요: GitHub 호스팅을 위한 Firebase/App ID 설정 (수정됨)
+        // ⭐ 중요: GitHub 호스팅을 위한 Firebase/App ID 설정
         // =========================================================================
         let app, db, auth, userId;
         
         // 1. App ID: GitHub에 올릴 때는 고정된 ID를 사용합니다.
-        // 이 앱의 고유 ID가 변경되면 기존 데이터와 연결이 끊깁니다.
-        const APP_ID_FOR_GITHUB = 'robot-interview-app-2025'; // 임의의 고정 ID
+        const APP_ID_FOR_GITHUB = 'robot-interview-app-2025'; 
         
-        // 2. Firebase Config: GitHub에 올릴 때는 실제 Firebase 프로젝트의 설정값을 직접 여기에 넣어야 합니다.
-        // 선생님께서 복사하신 실제 설정값으로 교체되었습니다!
+        // 2. Firebase Config: 선생님께서 복사하신 실제 Firebase 프로젝트의 설정값입니다.
         const CUSTOM_FIREBASE_CONFIG = {
             apiKey: "AIzaSyBMQMydcg_lP2t_TAhdVWYUtSgTMDmKwmE",
             authDomain: "airobot-3d894.firebaseapp.com",
@@ -92,7 +90,7 @@
             storageBucket: "airobot-3d894.firebasestorage.app",
             messagingSenderId: "521833072411",
             appId: "1:521833072411:web:26e946cd7b26cb6af2f5be",
-            measurementId: "G-Z55XBFJRGW" // Analytics ID는 Firestore 사용에 필수는 아니지만 포함했습니다.
+            measurementId: "G-Z55XBFJRGW" 
         };
         
         // 환경 감지: 캔버스 환경이 아니면 커스텀 설정을 사용합니다.
@@ -100,13 +98,18 @@
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : CUSTOM_FIREBASE_CONFIG;
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
         
+        
         // =========================================================================
-        // Gemini API Configuration
-        const apiKey = ""; 
+        // ⭐⭐ 해결 1: Gemini API Key 설정 (필수!) ⭐⭐
+        // =========================================================================
+        // GitHub 호스팅 시, 여기에 직접 Gemini API Key를 넣어주셔야 작동합니다.
+        // Google AI Studio에서 키를 발급받아 아래 "" 안에 붙여넣으세요.
+        const apiKey = "AIzaSyA1_d1_94WT7klF4Ukt0oWs6bdtuv7z6Zs"; 
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+        // =========================================================================
 
         // Teacher Login Configuration (NEW)
-        const TEACHER_PIN = '0000'; // 교사 인증용 비밀번호 (0901에서 0000으로 변경됨)
+        const TEACHER_PIN = '0000'; // 교사 인증용 비밀번호
         window.isTeacherLoggedIn = false;
 
 
@@ -595,6 +598,11 @@
                 contents: [{ parts: [{ text: userMessage }] }],
                 systemInstruction: { parts: [{ text: systemPrompt }] },
             };
+
+            // API Key가 설정되지 않았을 경우 에러 메시지 반환
+            if (apiKey === "여기에_당신의_GEMINI_API_키를_붙여넣으세요" || !apiKey) {
+                return `${persona.name} : 지금은 로봇의 두뇌(API Key)가 연결되지 않아서 답변을 할 수 없어요. 선생님께 API Key 설정을 요청해 주세요!`;
+            }
 
             for (let i = 0; i < 3; i++) { // Exponential backoff for 3 retries
                 try {
