@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>나 혼자 사는 이웃에게 물어봐!</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons for aesthetic icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f4f8; /* Very light blue/gray background */
+        }
+        .chat-bubble-user {
+            background-color: #4f46e5; /* Indigo */
+            color: white;
+            border-radius: 1.5rem 1.5rem 0.5rem 1.5rem;
+        }
+        .chat-bubble-ai {
+            background-color: #ffffff; /* White for AI response */
+            color: #1f2937; /* Dark gray text */
+            border-radius: 1.5rem 1.5rem 1.5rem 0.5rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        .persona-button {
+            transition: all 0.3s ease;
+        }
+        .persona-button:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+        .scrollable {
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        /* Notification style */
+        .notification {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            background-color: #10b981; /* Green-500 */
+            color: white;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            z-index: 1000;
+            opacity: 0;
+            transition: opacity 0.5s;
+        }
+        .notification.show {
+            opacity: 1;
+        }
+        /* Custom table styling for the Teacher Dashboard */
+        #teacher-dashboard table th, #teacher-dashboard table td {
+            border: 1px solid #e5e7eb;
+            vertical-align: top;
+        }
+    </style>
+</head>
+<body class="min-h-screen p-4">
+
+    <!-- Firebase SDK Imports (Mandatory) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        // Auth imports needed for sign-in
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        // Firestore imports
+        import { getFirestore, setDoc, doc, collection, query, where, onSnapshot, addDoc, serverTimestamp, getDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Set Firebase Log Level to Debug
+        setLogLevel('Debug');
+
+        // =========================================================================
+        // ⭐ 중요: GitHub 호스팅을 위한 Firebase/App ID 설정 (수정됨)
+        // =========================================================================
+        let app, db, auth, userId;
+        
+        // 1. App ID: GitHub에 올릴 때는 고정된 ID를 사용합니다.
+        // 이 앱의 고유 ID가 변경되면 기존 데이터와 연결이 끊깁니다.
+        const APP_ID_FOR_GITHUB = 'robot-interview-app-2025'; // 임의의 고정 ID
+        
+        // 2. Firebase Config: GitHub에 올릴 때는 실제 Firebase 프로젝트의 설정값을 직접 여기에 넣어야 합니다.
+        // 선생님께서 복사하신 실제 설정값으로 교체되었습니다!
+        const CUSTOM_FIREBASE_CONFIG = {
+            apiKey: "AIzaSyBMQMydcg_lP2t_TAhdVWYUtSgTMDmKwmE",
+            authDomain: "airobot-3d894.firebaseapp.com",
+            projectId: "airobot-3d894",
+            storageBucket: "airobot-3d894.firebasestorage.app",
+            messagingSenderId: "521833072411",
+            appId: "1:521833072411:web:26e946cd7b26cb6af2f5be",
+            measurementId: "G-Z55XBFJRGW" // Analytics ID는 Firestore 사용에 필수는 아니지만 포함했습니다.
+        };
+        
+        // 환경 감지: 캔버스 환경이 아니면 커스텀 설정을 사용합니다.
+        const appId = typeof __app_id !== 'undefined' ? __app_id : APP_ID_FOR_GITHUB;
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : CUSTOM_FIREBASE_CONFIG;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        
+        // =========================================================================
+        // Gemini API Configuration
+        const apiKey = ""; 
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+        // Teacher Login Configuration (NEW)
+        const TEACHER_PIN = '0000'; // 교사 인증용 비밀번호 (0901에서 0000으로 변경됨)
+        window.isTeacherLoggedIn = false;
+
+
+        // --- DRAFT PERSISTENCE FUNCTIONS ---
+
+        /**
+         * Saves the current working draft content to a private location.
+         * Note: For GitHub, the path structure is adjusted slightly to use the fixed APP_ID.
+         */
+        const saveDraft = async (personaId, ideaContent) => {
+            if (!db || !userId) return;
+
+            // Private data path: /artifacts/{appId}/users/{userId}/drafts/{personaId}
+            const draftPath = `artifacts/${appId}/users/${userId}/drafts`;
+            
+            try {
+                // Document ID is the personaId (narae, gian, hyunmoo)
+                await setDoc(doc(db, draftPath, personaId), {
+                    content: ideaContent,
+                    lastUpdated: serverTimestamp()
+                });
+                console.log(`Draft for ${personaId} saved successfully.`);
+            } catch (error) {
+                console.error("Draft saving failed:", error);
+            }
+        };
+
+        /**
+         * Loads the active draft for the selected persona.
+         */
+        const loadDraft = async (personaId) => {
+            if (!db || !userId) return null;
+
+            // Private data path: /artifacts/{appId}/users/{userId}/drafts/{personaId}
+            const draftPath = `artifacts/${appId}/users/${userId}/drafts`;
+            
+            try {
+                const docSnap = await getDoc(doc(db, draftPath, personaId));
+                if (docSnap.exists() && docSnap.data().content) {
+                    console.log(`Draft for ${personaId} loaded.`);
+                    return docSnap.data().content;
+                }
+            } catch (error) {
+                console.error("Draft loading failed:", error);
+            }
+            return null;
+        };
+
+
+        // --- TEACHER DASHBOARD FUNCTIONS ---
+
+        /**
+         * Deletes a student idea document from the public collection. (NEW)
+         */
+        window.deleteIdea = async (docId) => {
+            if (!db || !window.isTeacherLoggedIn) {
+                showNotification('삭제 권한이 없습니다.', 'error');
+                return;
+            }
+
+            const collectionPath = `artifacts/${appId}/public/data/robot_ideas`;
+            
+            try {
+                // IMPORTANT: Since alert()/confirm() are forbidden, we perform the deletion immediately.
+                // The onSnapshot listener will update the UI immediately afterwards.
+                await deleteDoc(doc(db, collectionPath, docId));
+                showNotification('아이디어가 성공적으로 삭제되었습니다.', 'success');
+            } catch (error) {
+                console.error("아이디어 삭제 실패:", error);
+                showNotification('아이디어 삭제 중 오류 발생.', 'error');
+            }
+        };
+
+
+        /**
+         * Loads ALL submitted ideas from the public collection for teacher review.
+         */
+        const loadAllSubmittedIdeas = () => {
+            if (!db) {
+                document.getElementById('teacher-ideas-list').innerHTML = `<p class="text-red-500">데이터베이스 연결 오류.</p>`;
+                return;
+            }
+
+            // Public collection path: /artifacts/{appId}/public/data/robot_ideas
+            const collectionPath = `artifacts/${appId}/public/data/robot_ideas`;
+            const ideasRef = collection(db, collectionPath);
+            
+            // Real-time listener on all ideas in the public collection
+            onSnapshot(ideasRef, (snapshot) => {
+                const listContainer = document.getElementById('teacher-ideas-list');
+                
+                if (snapshot.empty) {
+                    listContainer.innerHTML = '<p class="text-lg text-gray-500 italic mt-4">아직 제출된 아이디어가 없습니다.</p>';
+                    return;
+                }
+                
+                // 1. Map and Sort by timestamp (descending)
+                const sortedDocs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+                    .sort((a, b) => (b.timestamp?.toDate() || new Date(0)) - (a.timestamp?.toDate() || new Date(0)));
+
+                let htmlContent = `
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full bg-white rounded-xl shadow-lg border border-gray-200">
+                            <thead>
+                                <tr class="bg-indigo-600 text-white uppercase text-sm leading-normal">
+                                    <th class="py-3 px-6 text-left rounded-tl-xl">학생 이름 (ID)</th>
+                                    <th class="py-3 px-6 text-left">인터뷰 대상</th>
+                                    <th class="py-3 px-6 text-left">아이디어 내용</th>
+                                    <th class="py-3 px-6 text-center">제출 시간</th> <!-- UPDATED COLUMN -->
+                                    <th class="py-3 px-6 text-center rounded-tr-xl">관리</th> <!-- UPDATED COLUMN -->
+                                </tr>
+                            </thead>
+                            <tbody class="text-gray-700 text-sm font-light">
+                `;
+                
+                // 2. Build Table Rows
+                sortedDocs.forEach(data => {
+                    const timestamp = data.timestamp && data.timestamp.toDate ? 
+                                      data.timestamp.toDate().toLocaleString('ko-KR') : 
+                                      '정보 없음';
+                    
+                    // Display Student ID safely
+                    const studentIdShort = data.studentId.substring(0, 8); 
+                    
+                    // Truncate idea content for table view
+                    const ideaPreview = data.ideaContent.length > 100 ? data.ideaContent.substring(0, 100) + '...' : data.ideaContent;
+                    
+                    htmlContent += `
+                        <tr class="border-b border-gray-200 hover:bg-indigo-50 transition-colors">
+                            <td class="py-3 px-6 text-left whitespace-nowrap">
+                                <span class="font-semibold">${data.studentName}</span> 
+                                <span class="text-xs text-gray-500 block">(${studentIdShort}...)</span>
+                            </td>
+                            <td class="py-3 px-6 text-left font-medium">
+                                ${data.persona}
+                            </td>
+                            <td class="py-3 px-6 text-left max-w-lg whitespace-normal text-xs">
+                                ${ideaPreview.replace(/\n/g, '<br>')}
+                            </td>
+                            <!-- Separate Submission Time Column -->
+                            <td class="py-3 px-6 text-center whitespace-nowrap text-xs text-gray-500">
+                                ${timestamp}
+                            </td>
+                            <!-- Separate Management Column -->
+                            <td class="py-3 px-6 text-center whitespace-nowrap text-xs">
+                                <button onclick="window.deleteIdea('${data.id}')" 
+                                        class="bg-red-500 text-white p-2 rounded-lg text-xs font-semibold hover:bg-red-600 transition-colors shadow-md">
+                                    <i data-lucide="trash-2" class="w-4 h-4 inline"></i> 삭제
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                });
+
+                htmlContent += `
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+                listContainer.innerHTML = htmlContent;
+                // Re-create icons for the new HTML content
+                lucide.createIcons();
+            }, (error) => {
+                console.error("선생님 활동 로그 로드 중 오류 발생:", error);
+                document.getElementById('teacher-ideas-list').innerHTML = `<p class="text-red-500 mt-4">활동 기록을 불러오지 못했습니다. 오류: ${error.message}</p>`;
+            });
+        };
+
+
+        /**
+         * Initializes Firebase and authenticates the user.
+         */
+        window.startApp = async () => {
+            console.log("Firebase Initialization started for App ID:", appId);
+
+            if (Object.keys(firebaseConfig).length > 0 && firebaseConfig.apiKey !== "YOUR_API_KEY_HERE") {
+                // Check if custom config is properly set before attempting to initialize
+                try {
+                    app = initializeApp(firebaseConfig);
+                    db = getFirestore(app);
+                    auth = getAuth(app);
+
+                    // Authentication Logic
+                    if (initialAuthToken && typeof __firebase_config !== 'undefined') {
+                        // Use custom token only if running in the special Canvas environment
+                        await signInWithCustomToken(auth, initialAuthToken);
+                        console.log("Signed in with custom token.");
+                    } else {
+                        // Use anonymous sign-in for GitHub or if custom token is not available
+                        await signInAnonymously(auth);
+                        console.log("Signed in anonymously.");
+                    }
+
+                    onAuthStateChanged(auth, (user) => {
+                        if (user) {
+                            userId = user.uid;
+                            console.log("User authenticated. UID:", userId);
+                            document.getElementById('user-info').innerHTML = `사용자 ID: ${userId}`;
+                        } else {
+                            // Fallback if not authenticated (should not happen in Canvas env)
+                            userId = crypto.randomUUID();
+                            document.getElementById('user-info').innerHTML = `사용자 ID: (익명) ${userId.substring(0, 8)}...`;
+                        }
+                    });
+
+                } catch (error) {
+                    console.error("Firebase initialization or authentication failed:", error);
+                    document.getElementById('user-info').innerHTML = `Firebase 오류: ${error.code}`;
+                }
+            } else {
+                 console.warn("Firebase config not found. Running in simulation mode without database persistence.");
+                 document.getElementById('user-info').innerHTML = `🚨 Firebase 설정 누락! GitHub 업로드 전 Config를 채워주세요.`;
+            }
+            
+            // Proceed to show the welcome screen regardless of Firebase status
+            document.getElementById('initial-loading').classList.add('hidden');
+            document.getElementById('persona-selection').classList.remove('hidden');
+        };
+
+        // Call startApp on load
+        window.onload = window.startApp;
+
+        // --- Global Application State and Data ---
+        window.currentPersona = null;
+        window.messageCount = 0; // Number of questions the student has asked
+        window.aiIsTyping = false;
+        window.awaitingSummaryConfirmation = false;
+        window.studentName = '학생'; // Default student name
+
+        const PERSONAS = {
+            narae: { // 20대 대학생 이름: 나래
+                name: '나래',
+                age: '20대 대학생',
+                image: `<div class="flex items-center justify-center w-20 h-20 bg-blue-500 rounded-full text-white text-3xl font-bold mb-3 shadow-inner">👩‍🎓</div>`,
+                color: 'bg-blue-500',
+                desc: '학업과 아르바이트를 병행하며 원룸에 거주',
+                quickQs: ['혼자 밥 먹을 때?', '세탁이 힘들어요?', '집안일은 누가 해요?', '학교 다니기 힘들어요?', '가장 필요한 로봇은?'],
+                summary: ['매번 한 끼 챙기기', '밀린 빨래와 청소', '무거운 짐 나르기']
+            },
+            gian: { // 30대 회사원 이름: 기안
+                name: '기안',
+                age: '30대 회사원',
+                image: `<div class="flex items-center justify-center w-20 h-20 bg-emerald-500 rounded-full text-white text-3xl font-bold mb-3 shadow-inner">👨‍💼</div>`,
+                color: 'bg-emerald-500',
+                desc: '일과 자기 계발에 집중하며 오피스텔에 거주',
+                quickQs: ['외로울 때는?', '아프면 누가 도와줘요?', '집 보안이 걱정돼요?', '음식물 쓰레기는?', '가장 필요한 로봇은?'],
+                summary: ['바쁜 일상 속 건강한 식사', '혼자 아플 때 돌봐줄 사람', '집 안팎의 안전 관리']
+            },
+            hyunmoo: { // 70대 독거 노인 이름: 현무 할머니
+                name: '현무 할머니',
+                age: '70대 독거 노인',
+                image: `<div class="flex items-center justify-center w-20 h-20 bg-amber-500 rounded-full text-white text-3xl font-bold mb-3 shadow-inner">👵</div>`,
+                color: 'bg-amber-500',
+                desc: '작은 주택에 거주하며 건강 관리가 필요함',
+                quickQs: ['건강은 누가 챙겨줘요?', '무거운 짐은 누가 날라줘요?', '외출이 힘든가요?', '가장 외로울 때는?', '가장 필요한 로봇은?'],
+                summary: ['무거운 짐 나르기 및 이동 보조', '정확한 약 복용 관리', '갑작스러운 사고 대비 및 응급 호출']
+            }
+        };
+
+        // --- Teacher View Navigation and Login (MODIFIED) ---
+
+        /**
+         * Initiates the process to go to the Teacher Dashboard, starting with the login screen.
+         */
+        window.goToTeacherDashboard = () => {
+            // Hide other screens
+            document.getElementById('persona-selection').classList.add('hidden');
+            document.getElementById('chat-interface').classList.add('hidden');
+            document.getElementById('robot-idea-note').classList.add('hidden');
+            document.getElementById('teacher-dashboard').classList.remove('hidden');
+
+            // Show login screen initially
+            document.getElementById('teacher-login-screen').classList.remove('hidden');
+            document.getElementById('teacher-dashboard-content').classList.add('hidden');
+            document.getElementById('teacher-pin-input').value = '';
+            document.getElementById('teacher-login-error').textContent = '';
+            document.getElementById('teacher-pin-input').focus();
+        };
+
+        /**
+         * Attempts to log in the teacher using the PIN. (NEW)
+         */
+        window.attemptTeacherLogin = () => {
+            const pinInput = document.getElementById('teacher-pin-input');
+            const pin = pinInput.value.trim();
+            const errorMessage = document.getElementById('teacher-login-error');
+
+            if (pin === TEACHER_PIN) {
+                window.isTeacherLoggedIn = true;
+                errorMessage.textContent = '';
+                
+                // Hide login screen and show dashboard content
+                document.getElementById('teacher-login-screen').classList.add('hidden');
+                document.getElementById('teacher-dashboard-content').classList.remove('hidden');
+                
+                // Load the data
+                loadAllSubmittedIdeas();
+            } else {
+                errorMessage.textContent = '잘못된 비밀번호입니다. 다시 시도해 주세요.';
+                pinInput.value = '';
+                pinInput.focus();
+            }
+        };
+
+
+        /**
+         * Resets login status and goes back to the home screen.
+         */
+        window.goToHomeFromTeacher = () => {
+            document.getElementById('teacher-dashboard').classList.add('hidden');
+            document.getElementById('persona-selection').classList.remove('hidden');
+            // Reset login status
+            window.isTeacherLoggedIn = false;
+        };
+
+        // --- Firebase Data Functions ---
+
+        /**
+         * Shows a temporary notification message on the screen.
+         * @param {string} message - The message to display.
+         * @param {string} type - 'success', 'error', or 'info'.
+         */
+        const showNotification = (message, type = 'info') => {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.className = 'notification show';
+            
+            if (type === 'success') {
+                notification.style.backgroundColor = '#10b981'; // Tailwind green-500
+            } else if (type === 'error') {
+                notification.style.backgroundColor = '#ef4444'; // Tailwind red-500
+            } else {
+                notification.style.backgroundColor = '#3b82f6'; // Tailwind blue-500
+            }
+
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 3000);
+        };
+
+        /**
+         * Saves the current robot idea note to Firestore.
+         */
+        window.saveIdea = async () => {
+            const ideaContent = document.getElementById('idea-note-textarea').value.trim();
+            // Check if essential components are initialized
+            if (!ideaContent || !db || !userId || !window.currentPersona) {
+                showNotification('저장할 내용이나 사용자 정보가 부족합니다. (로그인 확인 필요)', 'error');
+                return;
+            }
+
+            const persona = window.currentPersona;
+            const ideaData = {
+                studentId: userId, // 학생의 고유 ID (중요)
+                studentName: window.studentName, // 학생이 입력한 이름 (표시용)
+                persona: persona.name, // 인터뷰한 페르소나 이름
+                ideaContent: ideaContent,
+                timestamp: serverTimestamp(), // 저장 시각
+                appId: appId // 앱 ID
+            };
+
+            try {
+                // 1. Save to Public Collection (Official Idea Submission)
+                // Public data path: /artifacts/{appId}/public/data/robot_ideas
+                const collectionPath = `artifacts/${appId}/public/data/robot_ideas`;
+                await addDoc(collection(db, collectionPath), ideaData);
+
+                // 2. Save the same content as the active draft for persistence
+                await saveDraft(persona.id, ideaContent);
+                
+                showNotification('아이디어가 성공적으로 저장되었습니다! (노트 내용이 유지됩니다)', 'success');
+                
+
+            } catch (error) {
+                console.error("아이디어 저장 실패:", error);
+                showNotification('아이디어 저장 중 오류 발생! 콘솔 확인 필요', 'error');
+            }
+        };
+
+        // --- Core Application Functions ---
+
+        /**
+         * Resets the state and returns to the persona selection screen.
+         */
+        window.goToHome = () => {
+            // --- ADD DRAFT SAVING ---
+            const currentIdeaContent = document.getElementById('idea-note-textarea').value;
+            // Only save if a persona was selected and thus a valid ID exists
+            if (window.currentPersona && window.currentPersona.id) {
+                saveDraft(window.currentPersona.id, currentIdeaContent);
+            }
+            // ------------------------
+            
+            window.currentPersona = null;
+            window.messageCount = 0;
+            window.aiIsTyping = false;
+            window.awaitingSummaryConfirmation = false;
+            document.getElementById('user-input').disabled = false;
+            document.getElementById('send-button').disabled = false;
+            document.getElementById('suggest-button').disabled = false;
+
+            document.getElementById('chat-interface').classList.add('hidden');
+            document.getElementById('robot-idea-note').classList.add('hidden');
+            document.getElementById('persona-selection').classList.remove('hidden');
+            // Show the student name input again when going home
+            document.getElementById('name-input-container').classList.remove('hidden');
+            document.getElementById('teacher-dashboard').classList.add('hidden'); // Ensure dashboard is hidden
+        };
+
+        /**
+         * Switches the view from persona selection to the chat interface.
+         * @param {string} personaId - 'narae', 'gian', or 'hyunmoo'
+         */
+        window.selectPersona = async (personaId) => { // Made async to support draft loading
+            const studentInput = document.getElementById('student-name-input').value.trim();
+            window.studentName = studentInput || '학생'; // Use input name or default to '학생'
+            
+            // Hide name input container after selection
+            document.getElementById('name-input-container').classList.add('hidden');
+
+
+            const persona = PERSONAS[personaId];
+            persona.id = personaId; // Add ID property for draft saving
+            window.currentPersona = persona;
+            window.messageCount = 0;
+            window.awaitingSummaryConfirmation = false; // Reset state
+
+            document.getElementById('app-title').textContent = `나 혼자 사는 '${persona.name}'에게 물어봐!`;
+            document.getElementById('persona-image-container').innerHTML = persona.image;
+            document.getElementById('persona-name-display').textContent = persona.name;
+            document.getElementById('persona-desc-display').textContent = persona.age;
+            
+            // 1. Clear chat history
+            document.getElementById('chat-history').innerHTML = '';
+            
+            // 2. Initial AI Greeting
+            const initialGreeting = `안녕하세요! ${window.studentName} 학생, 저는 ${persona.age}인 ${persona.name}이라고 해요. 혼자 살면서 겪는 일들에 대해 궁금한 것이 있다면 무엇이든 편하게 물어봐요!`;
+            displayMessage('ai', initialGreeting);
+
+
+            // Set Quick Question Buttons
+            const quickQContainer = document.getElementById('quick-questions');
+            quickQContainer.innerHTML = persona.quickQs.map(q => `
+                <button onclick="handleQuickQuestion('${q.replace(/'/g, "\\'")}')" 
+                        class="bg-white text-gray-700 py-2 px-3 rounded-full text-sm font-medium shadow-md hover:bg-gray-100 transition-colors whitespace-nowrap">
+                    ${q}
+                </button>
+            `).join('');
+
+            // 3. Load Draft and set textarea value (NEW)
+            const savedDraft = await loadDraft(personaId);
+            const defaultContent = `[${persona.name}님을 위한 로봇 아이디어]\n`;
+            document.getElementById('idea-note-textarea').value = savedDraft || defaultContent; // Use saved draft or default
+
+            // Show the chat interface
+            document.getElementById('persona-selection').classList.add('hidden');
+            document.getElementById('chat-interface').classList.remove('hidden');
+            document.getElementById('robot-idea-note').classList.remove('hidden');
+            document.getElementById('teacher-dashboard').classList.add('hidden'); // Ensure teacher view is hidden
+        };
+        
+        /**
+         * Calls the Gemini API to get a context-aware and educational response.
+         * @param {string} userMessage - The student's message or question.
+         * @returns {Promise<string>} The AI's generated response.
+         */
+        const callGeminiApi = async (userMessage) => {
+            const persona = window.currentPersona;
+            const studentName = window.studentName;
+            
+            const systemPrompt = `
+                당신은 1인 가구 인터뷰 챗봇입니다. 당신의 이름은 '${persona.name}'이며, ${persona.age}이고, ${persona.desc} 상황에 맞춰 답변해야 합니다.
+                
+                당신과 대화하는 학생의 이름은 '${studentName}'이며, 답변 시 학생의 이름을 부르며 친근하게 대화해 주세요.
+                
+                최우선 지침: 답변은 항상 긍정적이고 교육적이며, 초등학교 3학년에게 안전한 내용으로만 생성해야 합니다. 부적절하거나, 폭력적이거나, 부정적인 사회 이슈에 대해서는 언급하지 마세요.
+                
+                답변 목표: 학생의 질문에 대답하되, 답변 내용은 반드시 당신이 겪는 일상 속 '구체적인 불편함'과 '도움이 필요한 상황'을 설명하는 데 초점을 맞춰야 합니다.
+                
+                핵심 유도: 답변의 끝에 후속 질문을 넣는 것은 필수가 아닙니다. 자연스럽게 대화가 마무리된다면 질문 없이 끝내도 됩니다. 만약 질문을 한다면, 1인 가구의 불편함이나 학생들의 공감 능력을 유도하는 일반적인 질문(예: "혹시 ${studentName} 학생은 이런 문제에 대해 어떻게 생각해요?")을 추가하여 대화의 흐름을 이어가야 합니다. 로봇 개발에 대한 직접적인 질문은 하지 않습니다.
+                
+                문체 및 길이: 초등학교 3학년 눈높이에 맞춰 친절하고 쉬운 문체를 사용하고, 답변은 2~3문장 이내로 짧고 명료하게 유지해야 합니다.
+            `;
+
+            const payload = {
+                contents: [{ parts: [{ text: userMessage }] }],
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+            };
+
+            for (let i = 0; i < 3; i++) { // Exponential backoff for 3 retries
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`API response error: ${response.statusText}`);
+                    }
+
+                    const result = await response.json();
+                    const candidate = result.candidates?.[0];
+
+                    if (candidate && candidate.content?.parts?.[0]?.text) {
+                        return candidate.content.parts[0].text;
+                    } else {
+                        throw new Error("Invalid API response structure or no text generated.");
+                    }
+                } catch (error) {
+                    console.error("Gemini API call failed:", error);
+                    if (i < 2) {
+                        const delay = Math.pow(2, i) * 1000;
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    } else {
+                        // Return fallback message after final retry failure
+                        return `${persona.name} : 지금은 인터넷 연결이 불안정해서 정확한 답변을 드리기 어려워요. 이웃을 위한 로봇 아이디어를 먼저 노트에 적어보는 건 어떨까요?`;
+                    }
+                }
+            }
+        };
+
+        /**
+         * Displays the chat messages in the history.
+         * @param {string} sender - 'user' or 'ai'
+         * @param {string} message - The message content.
+         */
+        const displayMessage = (sender, message) => {
+            const history = document.getElementById('chat-history');
+            const alignment = sender === 'user' ? 'justify-end' : 'justify-start';
+            const bubbleClass = sender === 'user' ? 'chat-bubble-user' : 'chat-bubble-ai';
+
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `flex ${alignment} mb-4`;
+            messageDiv.innerHTML = `
+                <div class="max-w-[80%] lg:max-w-[60%]">
+                    ${sender === 'ai' ? `<span class="text-sm font-semibold text-gray-600 mb-1 block">${window.currentPersona.name}</span>` : ''}
+                    <div class="p-3 ${bubbleClass} shadow-md">
+                        ${message}
+                    </div>
+                </div>
+            `;
+            history.appendChild(messageDiv);
+            history.scrollTop = history.scrollHeight;
+        };
+
+        /**
+         * Main function to handle sending a message (user input or quick question).
+         * Uses the real Gemini API call.
+         * @param {string} message - Optional message for quick question.
+         */
+        window.handleSendMessage = async (message = null) => {
+            if (window.aiIsTyping) return;
+
+            const inputElement = document.getElementById('user-input');
+            const userMessage = message || inputElement.value.trim();
+            inputElement.value = ''; // Clear input
+
+            if (!userMessage) return;
+
+            const userMessageLower = userMessage.toLowerCase().trim();
+
+            // 1. Handle Summary Confirmation Logic (if AI is waiting for response)
+            if (window.awaitingSummaryConfirmation) {
+                const isPositive = userMessageLower.includes('네') || userMessageLower.includes('yes') || userMessageLower.includes('응') || userMessageLower.includes('좋아요') || userMessageLower.includes('요약');
+                const isNegative = userMessageLower.includes('아니오') || userMessageLower.includes('no') || userMessageLower.includes('아니') || userMessageLower.includes('괜찮아요') || userMessageLower.includes('다음에') || userMessageLower.includes('계속');
+
+                displayMessage('user', userMessage);
+
+                if (isPositive) {
+                    window.awaitingSummaryConfirmation = false;
+                    wrapUpInterview();
+                    return;
+                } else if (isNegative) {
+                    window.awaitingSummaryConfirmation = false;
+                    displayMessage('ai', `${window.currentPersona.name} : 네, 좋아요 ${window.studentName} 학생! 그럼 더 궁금한 점이 있으면 편하게 물어보세요. (현재까지 ${window.messageCount}회 질문했어요.)`);
+                    inputElement.disabled = false;
+                    inputElement.focus();
+                    return;
+                } else {
+                    displayMessage('ai', `${window.currentPersona.name} : 요약할까요? '네' 또는 '아니오'처럼 간단하게 대답해 주시겠어요?`);
+                    inputElement.disabled = false;
+                    inputElement.focus();
+                    return;
+                }
+            }
+
+            // 2. Display User Message & Increment Count
+            displayMessage('user', userMessage);
+            window.messageCount++;
+            
+            const isEighthMessage = window.messageCount === 8; // Check if this is the 8th message
+
+            // 3. Start AI Typing/Response
+            window.aiIsTyping = true;
+            inputElement.disabled = true;
+
+            // Show a temporary '...' typing indicator
+            const history = document.getElementById('chat-history');
+            const typingIndicator = document.createElement('div');
+            typingIndicator.id = 'typing-indicator';
+            typingIndicator.className = 'flex justify-start mb-4';
+            typingIndicator.innerHTML = `
+                <div class="max-w-[80%] lg:max-w-[60%]">
+                    <span class="text-sm font-semibold text-gray-600 mb-1 block">${window.currentPersona.name}</span>
+                    <div class="p-3 chat-bubble-ai shadow-md">... 생각 중</div>
+                </div>
+            `;
+            history.appendChild(typingIndicator);
+            history.scrollTop = history.scrollHeight;
+
+            // 4. Call real Gemini API
+            const aiResponse = await callGeminiApi(userMessage);
+
+            // 5. Remove typing indicator and display final message
+            typingIndicator.remove();
+            displayMessage('ai', aiResponse);
+
+            window.aiIsTyping = false;
+            inputElement.disabled = false;
+            inputElement.focus();
+
+            // 6. Check for Wrap-up (AFTER the 8th answer is displayed) (MODIFIED LOGIC)
+            if (isEighthMessage) {
+                // Now, after answering the 8th question, immediately summarize without asking for confirmation.
+                wrapUpInterview();
+            }
+        };
+
+        /**
+         * Handles the quick question buttons.
+         * @param {string} question - The quick question text.
+         */
+        window.handleQuickQuestion = (question) => {
+            document.getElementById('user-input').value = question;
+            window.handleSendMessage();
+        };
+
+        /**
+         * Handles the 'Next Question Suggestion' feature.
+         */
+        window.suggestQuestions = () => {
+            if (window.aiIsTyping) return;
+
+            const suggestions = [
+                "이웃이 가장 힘들 때 로봇이 무엇을 해주면 좋을까요?",
+                "가장 외롭다고 느낄 때 로봇이 무엇을 해주면 좋을까요?",
+                "로봇이 있으면 생활이 어떻게 달라질 것 같아요?",
+                "만약 로봇이 있다면 이름은 무엇으로 짓고 싶어요?"
+            ];
+
+            const suggestedHtml = suggestions.map(q => 
+                `<p class="text-sm text-gray-700 py-1 px-2 cursor-pointer hover:bg-gray-200 rounded-md" 
+                   onclick="document.getElementById('user-input').value='${q}'; window.handleSendMessage();">
+                   ${q}
+                </p>`
+            ).join('');
+
+            displayMessage('ai', `질문이 막혔군요! 이 질문들을 해보는 건 어때요?\n<div class="mt-2 p-2 bg-gray-100 rounded-lg">${suggestedHtml}</div>`);
+        };
+
+        /**
+         * Triggers the final summary and wrap-up message.
+         */
+        const wrapUpInterview = () => {
+            const persona = window.currentPersona;
+            const summaryList = persona.summary.map(item => `<li>✅ ${item}</li>`).join('');
+
+            const wrapUpMessage = `
+                인터뷰에 응해줘서 고마워요! 이제 ${persona.name}님과의 대화를 요약해 드릴게요.<br><br>
+                <span class="font-bold">${persona.name}</span>님이 겪는 가장 큰 어려움 3가지는 다음과 같아요:<br>
+                <ul class="list-disc ml-5 mt-2 space-y-1 text-sm">
+                    ${summaryList}
+                </ul>
+                <div class="mt-4 p-3 bg-yellow-100 border-l-4 border-yellow-500 rounded-md text-center font-bold text-yellow-800">
+                    이제 ${window.studentName} 학생이 이웃을 도울 로봇 설계도를 그려볼 차례예요!
+                </div>
+                <p class="mt-4 text-indigo-600 font-bold text-center">더 궁금한 거 있으면 언제든지 또 물어봐요! 인터뷰는 계속됩니다!</p>
+            `;
+            
+            displayMessage('ai', wrapUpMessage);
+
+            // 입력창 비활성화하지 않고 대화를 계속할 수 있도록 유지
+            document.getElementById('user-input').disabled = false;
+            document.getElementById('send-button').disabled = false;
+            document.getElementById('suggest-button').disabled = false;
+            document.getElementById('user-input').focus();
+        };
+
+    </script>
+    
+    <!-- Notification Display -->
+    <div id="notification" class="notification"></div>
+
+    <!-- Main Application Container -->
+    <div id="initial-loading" class="flex flex-col items-center justify-center min-h-screen bg-white">
+        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
+        <p class="mt-4 text-indigo-600 font-medium">앱을 준비 중입니다...</p>
+    </div>
+
+    <!-- 1. Persona Selection Screen -->
+    <div id="persona-selection" class="hidden min-h-screen flex flex-col items-center justify-center p-8 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-xl shadow-2xl">
+        <h1 class="text-4xl font-extrabold text-gray-800 mb-6 text-center">나 혼자 사는 이웃에게 물어봐!</h1>
+        
+        <!-- Student Name Input (NEW) -->
+        <div id="name-input-container" class="w-full max-w-sm mb-8 p-4 bg-white rounded-xl shadow-md">
+            <label for="student-name-input" class="block text-lg font-medium text-gray-700 mb-2">먼저, 학생 이름을 알려주세요!</label>
+            <input type="text" id="student-name-input" placeholder="여기에 이름을 입력하세요 (예: 김OO)" 
+                   class="w-full p-3 border-2 border-indigo-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-base">
+        </div>
+
+        <p class="text-xl text-gray-600 mb-12 text-center">인터뷰할 이웃 한 분을 선택해 주세요.</p>
+        
+        <div class="grid md:grid-cols-3 gap-8 w-full max-w-4xl mb-12">
+            <!-- Narae Button (20대 대학생) -->
+            <button class="persona-button flex flex-col items-center p-6 bg-white rounded-xl shadow-lg border-b-4 border-blue-500" onclick="selectPersona('narae')">
+                <div class="flex items-center justify-center w-20 h-20 bg-blue-500 rounded-full text-white text-3xl font-bold mb-3 shadow-inner">👩‍🎓</div>
+                <p class="text-2xl font-bold text-gray-800">20대 나래</p>
+                <p class="text-sm text-gray-500 mt-1 text-center">학업과 알바를 병행하는 대학생</p>
+            </button>
+            
+            <!-- Gian Button (30대 회사원) -->
+            <button class="persona-button flex flex-col items-center p-6 bg-white rounded-xl shadow-lg border-b-4 border-emerald-500" onclick="selectPersona('gian')">
+                <div class="flex items-center justify-center w-20 h-20 bg-emerald-500 rounded-full text-white text-3xl font-bold mb-3 shadow-inner">👨‍💼</div>
+                <p class="text-2xl font-bold text-gray-800">30대 기안</p>
+                <p class="text-sm text-gray-500 mt-1 text-center">일과 자기 계발에 집중하는 회사원</p>
+            </button>
+
+            <!-- Hyunmoo Button (70대 독거 노인) -->
+            <button class="persona-button flex flex-col items-center p-6 bg-white rounded-xl shadow-lg border-b-4 border-amber-500" onclick="selectPersona('hyunmoo')">
+                <div class="flex items-center justify-center w-20 h-20 bg-amber-500 rounded-full text-white text-3xl font-bold mb-3 shadow-inner">👵</div>
+                <p class="text-2xl font-bold text-gray-800">70대 현무 할머니</p>
+                <p class="text-sm text-gray-500 mt-1 text-center">건강 관리가 필요한 독거 노인</p>
+            </button>
+        </div>
+
+        <!-- Teacher Dashboard Link (MODIFIED) -->
+        <button onclick="goToTeacherDashboard()" 
+                class="mt-8 bg-indigo-500 text-white font-semibold py-3 px-8 rounded-xl shadow-lg hover:bg-indigo-600 transition-colors flex items-center">
+            <i data-lucide="shield-check" class="w-5 h-5 mr-2"></i> 교사용 활동 확인 (모든 아이디어 보기)
+        </button>
+    </div>
+
+    <!-- 2. Teacher Dashboard (MODIFIED SECTION) -->
+    <div id="teacher-dashboard" class="hidden min-h-screen p-8 bg-gray-50 rounded-xl shadow-2xl w-full max-w-7xl mx-auto">
+        
+        <!-- Dashboard Header -->
+        <div class="flex items-center justify-between mb-6 border-b pb-4 border-gray-300">
+            <h1 class="text-3xl font-extrabold text-indigo-700 flex items-center">
+                <i data-lucide="graduation-cap" class="w-7 h-7 mr-3"></i> 학생 활동 제출 내역 대시보드
+            </h1>
+            <button onclick="goToHomeFromTeacher()" class="text-gray-500 hover:text-indigo-600 transition-colors p-2 rounded-full hover:bg-gray-200 flex items-center">
+                <i data-lucide="arrow-left" class="w-5 h-5 mr-1"></i> 홈으로 돌아가기
+            </button>
+        </div>
+
+        <!-- Teacher Login Screen (NEW) -->
+        <div id="teacher-login-screen" class="flex flex-col items-center justify-center h-96 mt-16 p-6 bg-white rounded-xl shadow-xl border-t-4 border-indigo-500">
+            <h2 class="text-3xl font-bold text-gray-800 mb-4 flex items-center">
+                <i data-lucide="lock" class="w-7 h-7 mr-3 text-indigo-500"></i> 교사 인증이 필요합니다
+            </h2>
+            <p class="text-lg text-gray-500 mb-6">대시보드를 확인하려면 비밀번호를 입력하세요. (힌트: 0000)</p>
+            <input type="password" id="teacher-pin-input" placeholder="비밀번호 입력 (PIN)"
+                   class="p-4 border-2 border-indigo-300 rounded-lg w-full max-w-sm text-center text-2xl tracking-widest font-mono focus:outline-none focus:ring-4 focus:ring-indigo-500 mb-6"
+                   onkeypress="if(event.key === 'Enter') attemptTeacherLogin()">
+            <button onclick="attemptTeacherLogin()" 
+                    class="bg-indigo-600 text-white font-bold py-3 px-12 rounded-xl shadow-lg hover:bg-indigo-700 transition-transform transform hover:scale-[1.02]">
+                로그인
+            </button>
+            <p id="teacher-login-error" class="mt-4 text-red-500 font-medium text-sm"></p>
+        </div>
+
+
+        <!-- Teacher Dashboard Content (Hidden until login) -->
+        <div id="teacher-dashboard-content" class="hidden">
+            <p class="text-lg text-gray-600 mb-6">모든 학생이 '아이디어 저장하기' 버튼을 눌러 제출한 기록을 실시간으로 보여줍니다.</p>
+            <p class="text-sm text-red-500 mb-4 font-semibold flex items-center">
+                 <i data-lucide="alert-triangle" class="w-4 h-4 mr-1"></i> 관리 열의 삭제 버튼을 누르면 아이디어가 파이어베이스에서 영구적으로 삭제됩니다.
+            </p>
+            <!-- Idea List Container -->
+            <div id="teacher-ideas-list" class="mt-8">
+                <div class="flex items-center justify-center h-20">
+                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
+                    <p class="ml-3 text-indigo-600">활동 기록을 불러오는 중...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- 3. Chat Interface -->
+    <div id="chat-interface" class="hidden w-full max-w-7xl mx-auto h-full bg-white rounded-xl shadow-2xl p-6">
+        
+        <!-- Title and Home Button (New) -->
+        <div class="flex items-center justify-between mb-4 border-b pb-3 border-gray-200">
+            <button onclick="goToHome()" class="text-gray-500 hover:text-indigo-600 transition-colors p-2 rounded-full hover:bg-gray-100">
+                <i data-lucide="home" class="w-6 h-6"></i>
+            </button>
+            <h1 id="app-title" class="text-3xl font-extrabold text-gray-800 text-center flex-grow">인터뷰 시작</h1>
+            <div class="w-10"></div> <!-- Placeholder for centering -->
+        </div>
+
+
+        <div class="flex flex-col md:flex-row h-[80vh] gap-4">
+            
+            <!-- A. Chat & Interaction Panel -->
+            <div class="flex flex-col w-full md:w-3/4 bg-gray-50 rounded-lg p-4 shadow-inner">
+                
+                <!-- Persona Info -->
+                <div class="flex items-center p-3 mb-4 bg-white rounded-xl shadow-lg">
+                    <div id="persona-image-container" class="mr-4">
+                        <!-- Persona Image/Icon will be injected here -->
+                    </div>
+                    <div>
+                        <p id="persona-name-display" class="text-xl font-bold text-gray-800"></p>
+                        <p id="persona-desc-display" class="text-sm text-gray-500"></p>
+                    </div>
+                </div>
+
+                <!-- Chat History Area -->
+                <div id="chat-history" class="scrollable flex-grow p-4 space-y-4 bg-gray-100 rounded-xl mb-4 shadow-inner">
+                    <!-- Messages will be appended here -->
+                </div>
+
+                <!-- Input & Action Area -->
+                <div class="flex flex-col space-y-3">
+                    <!-- Quick Question Buttons -->
+                    <div id="quick-questions" class="flex flex-wrap gap-2 overflow-x-auto pb-1">
+                        <!-- Quick Question buttons will be injected here -->
+                    </div>
+
+                    <!-- Main Input -->
+                    <div class="flex space-x-2">
+                        <button id="suggest-button" onclick="suggestQuestions()" 
+                                class="bg-yellow-400 text-gray-800 p-3 rounded-full font-semibold shadow-md hover:bg-yellow-500 transition-colors whitespace-nowrap">
+                            질문이 생각나지 않아요! 💡
+                        </button>
+                        <input type="text" id="user-input" placeholder="여기에 질문을 입력하세요..." 
+                               class="flex-grow p-3 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                               onkeypress="if(event.key === 'Enter') handleSendMessage()">
+                        <button id="send-button" onclick="handleSendMessage()" 
+                                class="bg-indigo-600 text-white p-3 rounded-full font-semibold shadow-lg hover:bg-indigo-700 transition-colors">
+                            <i data-lucide="send" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- B. Robot Idea Note Panel -->
+            <div id="robot-idea-note" class="hidden w-full md:w-1/4 bg-purple-50 rounded-lg p-4 shadow-lg flex flex-col space-y-3 overflow-y-auto">
+                <h2 class="text-xl font-bold text-purple-800 flex items-center mb-2">
+                    <i data-lucide="lightbulb" class="w-5 h-5 mr-2 text-purple-600"></i> 나의 로봇 아이디어 노트
+                </h2>
+                <p class="text-sm text-purple-600 mb-3">이웃의 불편함을 듣고 떠오른 로봇 기능을 여기에 메모하세요!</p>
+                
+                <!-- The height here allows for more focus on the current draft -->
+                <textarea id="idea-note-textarea" 
+                          class="h-[30vh] w-full p-3 border border-purple-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-purple-500" 
+                          placeholder="로봇 이름: '도와줘 로봇'&#10;기능: 아플 때 약 가져다주기"></textarea>
+                
+                <button onclick="saveIdea()" 
+                        class="bg-purple-600 text-white p-3 rounded-lg font-semibold shadow-md hover:bg-purple-700 transition-colors">
+                    <i data-lucide="save" class="w-5 h-5 inline mr-2"></i> 아이디어 저장하기
+                </button>
+                
+                <!-- NOTE: Saved Ideas List div was removed. -->
+
+                <p class="text-xs text-center text-gray-500 mt-auto" id="user-info">사용자 ID: (로딩 중)</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize Lucide icons
+        lucide.createIcons();
+    </script>
+</body>
+</html>
