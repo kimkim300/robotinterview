@@ -86,6 +86,7 @@
         const CUSTOM_FIREBASE_CONFIG = {
             apiKey: "AIzaSyBMQMydcg_lP2t_TAhdVWYUtSgTMDmKwmE",
             authDomain: "airobot-3d894.firebaseapp.com",
+            // ⭐⭐ 수정 완료: 여기의 불필요한 'ㄹ'을 제거했습니다. ⭐⭐
             projectId: "airobot-3d894",
             storageBucket: "airobot-3d894.firebasestorage.app",
             messagingSenderId: "521833072411",
@@ -100,10 +101,9 @@
         
         
         // =========================================================================
-        // ⭐⭐ 해결 1: Gemini API Key 설정 (필수!) ⭐⭐
+        // ⭐⭐ Gemini API Key 설정 (필수!) ⭐⭐
         // =========================================================================
         // GitHub 호스팅 시, 여기에 직접 Gemini API Key를 넣어주셔야 작동합니다.
-        // Google AI Studio에서 키를 발급받아 아래 "" 안에 붙여넣으세요.
         const apiKey = "AIzaSyA1_d1_94WT7klF4Ukt0oWs6bdtuv7z6Zs"; 
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
         // =========================================================================
